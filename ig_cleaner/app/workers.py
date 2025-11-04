@@ -100,10 +100,24 @@ async def process_account(account_id: int):
         await send_telegram_message(f"✅ Successfully deleted {deletions_count} posts for `{account.username}`.")
 
     except Exception as e:
-        log.exception("An error occurred while processing account.", account_username=account.username)
+        log.exception("An uncaught error occurred while processing account.", account_username=account.username)
+
+        # Try to take a final screenshot for context
+        screenshot_path = get_screenshot_path(account.username, "uncaught_exception")
+        error_message = f"🚨 Uncaught ERROR for `{account.username}`: {e}. Account quarantined."
+
+        try:
+            # Check if the 'page' object exists and is usable
+            if 'page' in locals() and page and not page.is_closed():
+                await page.screenshot(path=screenshot_path)
+                log.info("Saved screenshot of uncaught exception.", path=screenshot_path)
+                error_message += f" Screenshot: `{screenshot_path}`"
+        except Exception as screenshot_e:
+            log.error("Failed to take screenshot during exception handling.", exc_info=screenshot_e)
+
         account.status = 'quarantine'
         db_session.commit()
-        await send_telegram_message(f"🚨 ERROR for `{account.username}`: {e}. Account quarantined.")
+        await send_telegram_message(error_message)
 
     finally:
         if ws_endpoint:

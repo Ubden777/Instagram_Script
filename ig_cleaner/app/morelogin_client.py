@@ -27,19 +27,25 @@ class MoreLoginClient:
             response.raise_for_status()
 
             data = response.json()
+            # Log the full API response for debugging purposes
+            self.log.debug("Received response from MoreLogin start API.", response_data=data, profile_id=profile_id)
+
             if data.get("code") == 0 and "data" in data:
-                # The exact key for the debugging port might vary, check MoreLogin docs.
-                # It's often 'wsUrl' or a 'debugPort' which needs to be assembled into a URL.
+                # Definitively parse the endpoint from the response, prioritizing 'wsUrl'
                 endpoint = data["data"].get("wsUrl") or data["data"].get("debugPort")
                 if not endpoint:
-                    self.log.error("MoreLogin API response missing endpoint.", response_data=data, profile_id=profile_id)
-                    raise Exception("MoreLogin API response missing endpoint.")
+                    self.log.error("MoreLogin API response is missing the endpoint.", response_data=data, profile_id=profile_id)
+                    raise Exception("MoreLogin API response is missing the 'wsUrl' or 'debugPort' key.")
+
+                # If it's just a port, construct the full ws endpoint URL
+                if str(endpoint).isdigit():
+                    endpoint = f"ws://127.0.0.1:{endpoint}"
 
                 self.log.info("Successfully started MoreLogin profile.", profile_id=profile_id, endpoint=endpoint)
                 return endpoint
             else:
                 self.log.error("Failed to start MoreLogin profile via API.", profile_id=profile_id, response_data=data)
-                raise Exception(f"Failed to start profile: {data.get('message')}")
+                raise Exception(f"Failed to start profile: {data.get('message', 'Unknown API error')}")
         except requests.exceptions.Timeout:
             self.log.exception("Request to MoreLogin API timed out while starting profile.", profile_id=profile_id)
             raise Exception("MoreLogin API request timed out.")

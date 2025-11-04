@@ -136,3 +136,24 @@ python manage_accounts.py update --username "your_ig_username" --proxy "http://n
 
 -   The script prints structured logs to the console.
 -   It also creates detailed logs in the directory specified by the `LOG_DIR` environment variable, with a separate subdirectory for each account. This is essential for debugging.
+
+## Best Practices for Safe Usage
+
+Automating actions on social media platforms carries inherent risks. To minimize the chances of your accounts being flagged or restricted, follow these guidelines:
+
+-   **Test on Non-Critical Accounts**: Before running the script on important client accounts, always test it thoroughly on a non-critical, test account.
+-   **Start with a Low Deletion Count**: Do not delete 25 posts in the first run. Configure the `DEFAULT_DELETE_COUNT` in your `.env` file to a small number (e.g., `1` to `5`) for the initial runs. Gradually increase the count as you confirm the script is working reliably and not triggering any warnings.
+-   **Monitor Notifications**: Keep a close eye on the Telegram notifications. If an account is quarantined, manually log in to check for any challenges, warnings, or 2FA requests.
+-   **Use High-Quality Proxies**: Use residential or ISP proxies that are dedicated to a single account. Avoid sharing proxies between accounts.
+
+## Maintenance
+
+### Handling Instagram UI Changes
+
+Instagram frequently updates its website's design and code. This can break the script's ability to find and click on buttons, as the UI selectors (e.g., `svg[aria-label="More options"]`) may change.
+
+-   **Symptom**: The script fails with a `PlaywrightTimeoutError` and saves a screenshot showing that it couldn't find an element it was looking for.
+-   **Solution**: The selectors are defined in the `ig_cleaner/app/ig_actions.py` file. A developer will need to:
+    1.  Inspect the Instagram website manually in a browser to find the new selector for the element that failed.
+    2.  Update the corresponding selector string in the `ig_actions.py` file.
+    3.  Retest the script on a test account.
