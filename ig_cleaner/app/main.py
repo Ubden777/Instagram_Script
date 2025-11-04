@@ -5,6 +5,11 @@ from apscheduler.triggers.cron import CronTrigger
 from app.db import Session, Schedule, Account
 from app.workers import process_account
 from app.config import WORKERS_COUNT
+from app.logging_config import get_logger, setup_logging
+
+# Setup logging at the application's entry point
+setup_logging()
+log = get_logger(__name__)
 
 async def worker_wrapper(semaphore, account_id):
     """A wrapper to manage the semaphore for each worker task."""
@@ -28,7 +33,7 @@ def schedule_jobs(scheduler):
     schedules = db_session.query(Schedule).filter_by(enabled=True).all()
 
     for job in schedules:
-        print(f"Scheduling job {job.id} with cron expression: {job.cron_expr}")
+        log.info("Scheduling job.", job_id=job.id, cron_expr=job.cron_expr)
 
         account_ids_to_run = []
         if job.target_account_ids == 'all':
@@ -38,7 +43,7 @@ def schedule_jobs(scheduler):
             try:
                 account_ids_to_run = [int(i) for i in job.target_account_ids.split(',')]
             except ValueError:
-                print(f"Invalid target_account_ids for schedule {job.id}. Skipping.")
+                log.error("Invalid target_account_ids for schedule. Skipping.", schedule_id=job.id)
                 continue
 
         scheduler.add_job(
@@ -60,15 +65,14 @@ def main():
 
     if scheduler.get_jobs():
         scheduler.start()
-        print("Scheduler started. Press Ctrl+C to exit.")
+        log.info("Scheduler started. Press Ctrl+C to exit.")
         try:
-            # Keep the script running
             asyncio.get_event_loop().run_forever()
         except (KeyboardInterrupt, SystemExit):
             scheduler.shutdown()
-            print("Scheduler shut down.")
+            log.info("Scheduler shut down.")
     else:
-        print("No jobs scheduled. Exiting.")
+        log.info("No jobs scheduled. Exiting.")
 
 if __name__ == "__main__":
     main()

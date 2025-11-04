@@ -44,8 +44,10 @@ engine = create_engine(DB_URL)
 Session = sessionmaker(bind=engine)
 
 def init_db():
-    Base.metadata.create_all(engine)
-
-if __name__ == '__main__':
-    init_db()
-    print("Database initialized.")
+    from .logging_config import get_logger
+    log = get_logger(__name__)
+    try:
+        Base.metadata.create_all(engine)
+        log.info("Database tables created successfully.")
+    except Exception as e:
+        log.exception("Failed to initialize database.")

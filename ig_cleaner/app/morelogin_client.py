@@ -1,5 +1,6 @@
 import requests
 from .config import ML_API_KEY
+from .logging_config import get_logger
 
 BASE_URL = "https://api.morelogin.com/api/v2"
 
@@ -11,6 +12,7 @@ class MoreLoginClient:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+        self.log = get_logger(__name__)
 
     def start_profile(self, profile_id: str):
         """
@@ -19,19 +21,30 @@ class MoreLoginClient:
         url = f"{BASE_URL}/profile/start"
         payload = {"profileId": profile_id}
 
+        self.log.info("Attempting to start MoreLogin profile.", profile_id=profile_id)
         try:
-            response = requests.post(url, headers=self.headers, json=payload)
+            response = requests.post(url, headers=self.headers, json=payload, timeout=60)
             response.raise_for_status()
 
             data = response.json()
             if data.get("code") == 0 and "data" in data:
                 # The exact key for the debugging port might vary, check MoreLogin docs.
-                # Assuming it's in data['wsUrl'] or similar.
-                return data["data"].get("wsUrl") or data["data"].get("debugPort")
+                # It's often 'wsUrl' or a 'debugPort' which needs to be assembled into a URL.
+                endpoint = data["data"].get("wsUrl") or data["data"].get("debugPort")
+                if not endpoint:
+                    self.log.error("MoreLogin API response missing endpoint.", response_data=data, profile_id=profile_id)
+                    raise Exception("MoreLogin API response missing endpoint.")
+
+                self.log.info("Successfully started MoreLogin profile.", profile_id=profile_id, endpoint=endpoint)
+                return endpoint
             else:
+                self.log.error("Failed to start MoreLogin profile via API.", profile_id=profile_id, response_data=data)
                 raise Exception(f"Failed to start profile: {data.get('message')}")
+        except requests.exceptions.Timeout:
+            self.log.exception("Request to MoreLogin API timed out while starting profile.", profile_id=profile_id)
+            raise Exception("MoreLogin API request timed out.")
         except requests.exceptions.RequestException as e:
-            # Handle network errors
+            self.log.exception("Error communicating with MoreLogin API while starting profile.", profile_id=profile_id)
             raise Exception(f"Error communicating with MoreLogin API: {e}")
 
     def stop_profile(self, profile_id: str):
@@ -41,32 +54,21 @@ class MoreLoginClient:
         url = f"{BASE_URL}/profile/stop"
         payload = {"profileId": profile_id}
 
+        self.log.info("Attempting to stop MoreLogin profile.", profile_id=profile_id)
         try:
-            response = requests.post(url, headers=self.headers, json=payload)
+            response = requests.post(url, headers=self.headers, json=payload, timeout=30)
             response.raise_for_status()
 
             data = response.json()
-            if data.get("code") != 0:
+            if data.get("code") == 0:
+                self.log.info("Successfully stopped MoreLogin profile.", profile_id=profile_id)
+                return True
+            else:
+                self.log.error("Failed to stop MoreLogin profile via API.", profile_id=profile_id, response_data=data)
                 raise Exception(f"Failed to stop profile: {data.get('message')}")
-            return True
+        except requests.exceptions.Timeout:
+            self.log.exception("Request to MoreLogin API timed out while stopping profile.", profile_id=profile_id)
+            raise Exception("MoreLogin API request timed out.")
         except requests.exceptions.RequestException as e:
+            self.log.exception("Error communicating with MoreLogin API while stopping profile.", profile_id=profile_id)
             raise Exception(f"Error communicating with MoreLogin API: {e}")
-
-# Example usage (for testing)
-if __name__ == "__main__":
-    # This requires ML_API_KEY to be set in the environment
-    client = MoreLoginClient()
-    # Replace with a real profile ID for testing
-    test_profile_id = "your_test_profile_id"
-
-    try:
-        print(f"Attempting to start profile {test_profile_id}...")
-        endpoint = client.start_profile(test_profile_id)
-        print(f"Profile started successfully. Endpoint: {endpoint}")
-
-        input("Press Enter to stop the profile...")
-
-        client.stop_profile(test_profile_id)
-        print("Profile stopped successfully.")
-    except Exception as e:
-        print(f"An error occurred: {e}")

@@ -1,27 +1,32 @@
 import asyncio
 import random
+import os
+import time
 from .db import Session, Account, Deletion
 from .encrypt import decrypt_data
 from .morelogin_client import MoreLoginClient
 from .browser import connect_to_browser
 from . import ig_actions
-from .config import MAX_DELETES_PER_HOUR
+from .config import LOG_DIR
 from .notifier import send_telegram_message
 from .logging_config import get_logger, setup_logging
 
-# Setup logging once at the start of the app
 setup_logging()
 
+def get_screenshot_path(account_username: str, action: str) -> str:
+    """Generates a unique path for storing a screenshot."""
+    ts = int(time.time())
+    filename = f"{action}_{ts}.png"
+    path = os.path.join(LOG_DIR, account_username, "screenshots")
+    os.makedirs(path, exist_ok=True)
+    return os.path.join(path, filename)
+
 async def process_account(account_id: int):
-    """
-    The main worker function to process a single account.
-    """
+    """The main worker function to process a single account."""
     db_session = Session()
     account = db_session.query(Account).filter_by(id=account_id).first()
 
-    # Get a logger specific to this account's username for file logging
     log = get_logger(__name__, account_username=account.username if account else f"unknown_account_{account_id}")
-
     log.info("Starting worker for account.", account_id=account_id)
 
     if not account or not account.enabled:
@@ -37,7 +42,7 @@ async def process_account(account_id: int):
         log.info("Starting MoreLogin profile.", profile_id=account.profile_id)
         ws_endpoint = ml_client.start_profile(account.profile_id)
         if not ws_endpoint:
-            raise Exception("Failed to get WebSocket endpoint from MoreLogin.")
+            raise Exception("Failed to get WebSocket endpoint.")
 
         page = await connect_to_browser(ws_endpoint)
         if not page:
@@ -46,14 +51,15 @@ async def process_account(account_id: int):
         await page.goto("https://www.instagram.com/")
         await asyncio.sleep(5)
 
-        is_logged_in = "login" not in await page.url()
-        if not is_logged_in:
+        if "login" in await page.url():
             log.info("Not logged in. Attempting to log in.")
-            login_success = await ig_actions.login_to_instagram(page, account.username, password)
+            screenshot_path = get_screenshot_path(account.username, "login_failed")
+            login_success = await ig_actions.login_to_instagram(page, account.username, password, screenshot_path)
             if not login_success:
-                raise Exception("Login failed, potential 2FA/challenge.")
+                raise Exception(f"Login failed. Screenshot saved to: {screenshot_path}")
 
-        posts_to_delete = await ig_actions.get_latest_posts(page, account.username)
+        screenshot_path = get_screenshot_path(account.username, "get_posts_failed")
+        posts_to_delete = await ig_actions.get_latest_posts(page, account.username, screenshot_path=screenshot_path)
 
         if not posts_to_delete:
             log.info("No posts found to delete.")
@@ -66,7 +72,8 @@ async def process_account(account_id: int):
             if deletions_count >= 25:
                 break
 
-            success = await ig_actions.delete_post(page, post_url)
+            screenshot_path = get_screenshot_path(account.username, "delete_failed")
+            success = await ig_actions.delete_post(page, post_url, screenshot_path=screenshot_path)
 
             status = "success" if success else "failed"
             log.info("Deletion attempt.", post_url=post_url, status=status)
@@ -82,9 +89,10 @@ async def process_account(account_id: int):
             else:
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
-                    log.error("Too many consecutive errors. Quarantining account.")
+                    msg = f"⚠️ Account `{account.username}` quarantined due to multiple errors. Last error screenshot: {screenshot_path}"
+                    log.error(msg)
                     account.status = 'quarantine'
-                    await send_telegram_message(f"⚠️ Account `{account.username}` quarantined due to multiple errors.")
+                    await send_telegram_message(msg)
                     break
 
         db_session.commit()

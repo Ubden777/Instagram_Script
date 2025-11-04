@@ -61,7 +61,7 @@ TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
 TELEGRAM_CHAT_ID="your_telegram_chat_id"
 
 # Encryption Key (MUST be a 32-character string)
-ENCRYPTION_KEY="a_very_secret_32_character_key!!"
+ENCRYPTION_KEY="your_generated_32_character_secret_key"
 
 # Optional: Override default settings
 # DB_URL="sqlite:///data/accounts.db"
@@ -69,7 +69,14 @@ ENCRYPTION_KEY="a_very_secret_32_character_key!!"
 # WORKERS_COUNT="3"
 # LOG_DIR="C:/path/to/your/logs" # Use a Windows-compatible path
 ```
-**Security Note**: The `ENCRYPTION_KEY` is critical. Keep it safe and do not commit it to version control.
+**Security Note**: The `ENCRYPTION_KEY` is critical for securing your account passwords. It **must be exactly 32 characters (bytes) long**. Using a key of any other length will cause the application to fail.
+
+You can generate a secure, random key with the following command:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(16))"
+```
+Copy the output of this command and paste it as the value for `ENCRYPTION_KEY`. Keep this key safe and do not commit it to version control.
 
 ## Usage
 
