@@ -18,10 +18,12 @@ class MoreLoginClient:
             response = requests.get(url, headers=self.headers, params=params)
             response.raise_for_status()
             data = response.json()
-            if data['code'] == 0:
+            print(f"Ответ от MoreLogin API: {data}")  # Логирование ответа для отладки
+            if data['code'] == 0 and 'data' in data and 'wsUrl' in data['data']:
                 return data['data']['wsUrl']
             else:
-                print(f"Ошибка при запуске профиля: {data['msg']}")
+                error_msg = data.get('msg', 'Неизвестная ошибка')
+                print(f"Ошибка при запуске профиля: {error_msg}")
                 return None
         except requests.exceptions.RequestException as e:
             print(f"Ошибка сети при запуске профиля: {e}")
