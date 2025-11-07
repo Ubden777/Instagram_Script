@@ -1,10 +1,10 @@
 import os
 import sys
 import random
-import asyncio
+import time
 from dotenv import load_dotenv
 
-def load_environment_variables():
+def load_env():
     """Loads environment variables from .env file and validates them."""
     load_dotenv()
     api_key = os.getenv('ML_API_KEY')
@@ -19,7 +19,7 @@ def load_environment_variables():
 
     return api_key, api_url
 
-async def random_delay(min_seconds=2, max_seconds=4):
+def random_delay(min_seconds=2, max_seconds=4):
     """Waits for a random amount of time between min_seconds and max_seconds."""
     delay = random.uniform(min_seconds, max_seconds)
-    await asyncio.sleep(delay)
+    time.sleep(delay)

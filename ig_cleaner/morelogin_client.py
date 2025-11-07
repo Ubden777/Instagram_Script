@@ -18,7 +18,7 @@ class MoreLoginClient:
             response = requests.get(url, headers=self.headers, params=params)
             response.raise_for_status()
             data = response.json()
-            print(f"Ответ от MoreLogin API: {data}")  # Логирование ответа для отладки
+            print("🔍 MoreLogin response:", data)
             if data['code'] == 0 and 'data' in data and 'wsUrl' in data['data']:
                 return data['data']['wsUrl']
             else:
