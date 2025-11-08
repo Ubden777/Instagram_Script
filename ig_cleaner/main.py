@@ -1,59 +1,56 @@
-# main.py
+# ig_cleaner/main.py
 from playwright.sync_api import sync_playwright
 from ig_cleaner.morelogin_client import MoreLoginClient
 from ig_cleaner.ig_actions import delete_posts
 from ig_cleaner.utils import load_env
 import time
 
+
 def main():
     env = load_env()
+
     ml = MoreLoginClient(env["ML_API_KEY"], env["ML_API_URL"])
-    username = input("Введите username (целевой профиль, без @): ").strip()
-    profile_id = input("Введите profile_id (MoreLogin): ").strip()
-    count = input("Сколько постов удалить? (по умолчанию 25): ").strip()
+
+    username = input("Instagram username (without @): ").strip()
+    profile_id = input("MoreLogin profile_id: ").strip()
+
+    count = input("How many posts to delete (default 25): ").strip()
     count = int(count) if count else 25
 
+    dry = input("Dry-run? (y/N): ").strip().lower() == "y"
+
     ws = None
+
     try:
-        print("Запуск профиля MoreLogin...")
+        print("Starting MoreLogin profile…")
         ws = ml.start_profile(profile_id)
-        if not ws:
-            print("Не удалось получить WebSocket/CDP endpoint от MoreLogin.")
-            return
 
-        print("Подключение Playwright к MoreLogin (CDP)...")
+        print("Connecting Playwright…")
         with sync_playwright() as p:
-            # Подключаемся по CDP/WS
             browser = p.chromium.connect_over_cdp(ws)
-            # получить существующую context (MoreLogin часто создаёт context)
-            contexts = browser.contexts
-            context = contexts[0] if contexts else browser.new_context()
-            pages = context.pages
-            page = pages[0] if pages else context.new_page()
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = context.pages[0] if context.pages else context.new_page()
 
-            # optional small delay for page load stability
-            time.sleep(1.0)
+            time.sleep(1)
 
-            deleted = delete_posts(page, username, count)
-            print(f"Удалено {deleted} постов")
+            deleted = delete_posts(page, username, count, dry_run=dry)
+            print(f"Finished: deleted {deleted} posts")
+
             try:
                 browser.close()
-            except Exception:
+            except:
                 pass
 
-        print("Задание выполнено.")
-    except Exception as e:
-        print("ОШИБКА:", e)
-    finally:
-        # Гарантированно пытаемся остановить профиль
-        try:
-            ok = ml.stop_profile(profile_id)
-            if ok:
-                print("Профиль остановлен.")
-            else:
-                print("Профиль остановить не удалось (возможно, уже остановлен).")
-        except Exception as e:
-            print("Ошибка при остановке профиля:", e)
+        print("\n✅ Task completed.")
 
-if __name__=='__main__':
+    except Exception as e:
+        print("❌ Error:", e)
+
+    finally:
+        print("Stopping profile…")
+        ok = ml.stop_profile(profile_id)
+        print("Profile stopped:", ok)
+
+
+if __name__ == "__main__":
     main()

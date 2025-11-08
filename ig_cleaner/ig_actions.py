@@ -1,140 +1,124 @@
-# ig_actions.py (sync delete_posts)
-import os, time, random
+# ig_cleaner/ig_actions.py
+import time
+import random
+import os
 from playwright.sync_api import TimeoutError
 
-def random_delay(a=1.5, b=3.0):
+
+def random_sleep(a=1.5, b=3.0):
     time.sleep(random.uniform(a, b))
 
-def delete_posts(page, username, count=25):
-    """
-    Удаляет до `count` последних постов (включая reels) из профиля username,
-    возвращает количество удалённых постов.
-    """
-    os.makedirs("logs", exist_ok=True)
-    page.goto(f"https://www.instagram.com/{username}/", wait_until="load")
-    random_delay(2,4)
-    if "login" in page.url or "accounts/login" in page.url:
-        print("Похоже, профиль не залогинен в MoreLogin.")
-        return 0
 
-    # Собрать ссылки на посты (anchors с /p/ или /reel/)
+def collect_posts(page, username, limit=25):
+    page.goto(f"https://www.instagram.com/{username}/", wait_until="load")
+    random_sleep(2, 4)
+
     links = page.query_selector_all('a[href*="/p/"], a[href*="/reel/"]')
     urls = []
+
     for a in links:
         href = a.get_attribute("href")
-        if href:
-            full = href if href.startswith("http") else f"https://www.instagram.com{href}"
-            if full not in urls:
-                urls.append(full)
-        if len(urls) >= count:
+        if not href:
+            continue
+        full = href if href.startswith("http") else f"https://www.instagram.com{href}"
+        if full not in urls:
+            urls.append(full)
+        if len(urls) >= limit:
             break
-    if not urls:
-        print("Посты не найдены.")
+
+    return urls
+
+
+def delete_posts(page, username, count=25, dry_run=False):
+    """
+    Deletes 'count' latest posts on page 'username'.
+    If dry_run=True — does NOT delete, only lists posts.
+    """
+    os.makedirs("logs", exist_ok=True)
+
+    urls = collect_posts(page, username, count)
+    if dry_run:
+        print("\n[DRY-RUN] Posts found:")
+        for u in urls:
+            print(u)
+        print("\nDry-run mode — no deletion performed.")
         return 0
 
-    deleted = 0
-    # варианты селекторов для "меню" (разные локали/DOM)
-    options = [
+    if not urls:
+        print("No posts found.")
+        return 0
+
+    menu_selectors = [
         'svg[aria-label="More options"]',
         'button[aria-label="More options"]',
         'svg[aria-label="Опции"]',
         'button[aria-label="Опции"]',
         'svg[aria-label="Еще варианты"]',
         'button[aria-label="Еще варианты"]',
-        'button[aria-label="More"]',
-        'button[aria-label="Options"]',
+        'button:has(svg[aria-label])',
         'div[role="button"][aria-haspopup="menu"]'
     ]
-    # варианты текста для "Delete"
-    delete_texts = ["Delete","Удалить","Eliminar","Supprimer","Eliminar publicación","Löschen","Deletar"]
+
+    delete_texts = [
+        "Delete", "Удалить", "Eliminar", "Supprimer", "Удалите публикацию", "Löschen", "Deletar"
+    ]
+
+    confirm_texts = [
+        "Delete", "Удалить", "OK", "Да", "Confirm", "Sí", "Eliminar"
+    ]
+
+    deleted = 0
 
     for i, url in enumerate(urls, start=1):
         try:
             page.goto(url, wait_until="load")
-            random_delay(1.0, 2.5)
+            random_sleep(1, 2)
 
-            # Найти и нажать кнопку "меню"
             clicked = False
-            for sel in options:
+            for sel in menu_selectors:
                 try:
-                    page.wait_for_selector(sel, timeout=2500)
-                    page.click(sel)
+                    page.click(sel, timeout=2500)
                     clicked = True
                     break
-                except TimeoutError:
-                    continue
-                except Exception:
-                    continue
-            if not clicked:
-                # возможно меню доступно через кнопку с aria-label 'More options' в svg внутри button
-                # Пытаемся кликнуть по общему селектору
-                try:
-                    page.click('button:has(svg[aria-label])', timeout=2500)
-                    clicked = True
-                except Exception:
+                except:
                     pass
+
             if not clicked:
-                print(f"Меню не найдено для {url}, пропускаю.")
+                print(f"No menu for {url}")
                 continue
 
-            # Нажать пункт Delete (по тексту) — попробовать все языки
-            deleted_clicked = False
+            deletion_clicked = False
             for txt in delete_texts:
                 try:
-                    page.click(f'text="{txt}"', timeout=2500)
-                    deleted_clicked = True
+                    page.get_by_text(txt, exact=False).click(timeout=2500)
+                    deletion_clicked = True
                     break
-                except TimeoutError:
-                    continue
-                except Exception:
-                    continue
-
-            if not deleted_clicked:
-                # возможно пункт в меню имеет селектор role="menuitem" и содержит слово 'Delete' в кнопке
-                try:
-                    menu_items = page.query_selector_all('button,div[role="menuitem"]')
-                    for mi in menu_items:
-                        t = (mi.inner_text() or "").strip()
-                        for token in delete_texts:
-                            if token.lower() in t.lower():
-                                mi.click()
-                                deleted_clicked = True
-                                break
-                        if deleted_clicked:
-                            break
-                except Exception:
+                except:
                     pass
 
-            # если требует подтверждение — нажать подтверждение (по тексту)
-            if deleted_clicked:
-                # Подтверждающие кнопки с текстом Delete/Удалить и т.п.
-                confirm_texts = ["Delete","Удалить","Sí, eliminar","Eliminar","Confirmer","OK","Да, удалить"]
-                confirmed = False
-                for ct in confirm_texts:
-                    try:
-                        page.wait_for_selector(f'text="{ct}"', timeout=2500)
-                        page.click(f'text="{ct}"')
-                        confirmed = True
-                        break
-                    except TimeoutError:
-                        continue
-                    except Exception:
-                        continue
-                # Некритично — иногда нет подтверждения
-                deleted += 1
-                print(f"{i}/{len(urls)} удалён.")
-                random_delay(1.5, 3.0)
-            else:
-                print(f"Не удалось нажать Delete для {url}.")
+            if not deletion_clicked:
+                print(f"No 'delete' menu item for {url}")
                 continue
 
+            confirmed = False
+            for txt in confirm_texts:
+                try:
+                    page.get_by_text(txt, exact=False).click(timeout=2000)
+                    confirmed = True
+                    break
+                except:
+                    pass
+
+            deleted += 1
+            print(f"Deleted {i}/{len(urls)}")
+            random_sleep()
+
         except Exception as e:
-            p = f"logs/error_{username}_{i}.png"
+            screenshot = f"logs/error_{username}_{i}.png"
             try:
-                page.screenshot(path=p)
-            except Exception:
+                page.screenshot(path=screenshot)
+            except:
                 pass
-            print(f"Ошибка при обработке {url}: {e}. Скрин: {p}")
-            continue
+            print(f"Error on {url}: {e} (screenshot {screenshot})")
 
     return deleted
