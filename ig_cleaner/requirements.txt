@@ -1,3 +1,10 @@
 playwright
 requests
 python-dotenv
+greenlet
+pyee
+certifi
+charset-normalizer
+idna
+urllib3
+typing-extensions

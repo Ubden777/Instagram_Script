@@ -1,11 +1,9 @@
 import os
 import sys
-import random
-import time
 from dotenv import load_dotenv
 
 def load_env():
-    """Loads environment variables from .env file and validates them."""
+    """Loads environment variables from .env file and returns them as a dict."""
     load_dotenv()
     api_key = os.getenv('ML_API_KEY')
     api_url = os.getenv('ML_API_URL')
@@ -17,9 +15,4 @@ def load_env():
         print("ML_API_URL=http://127.0.0.1:35000")
         sys.exit(1)
 
-    return api_key, api_url
-
-def random_delay(min_seconds=2, max_seconds=4):
-    """Waits for a random amount of time between min_seconds and max_seconds."""
-    delay = random.uniform(min_seconds, max_seconds)
-    time.sleep(delay)
+    return {"ML_API_KEY": api_key, "ML_API_URL": api_url}

@@ -1,37 +1,79 @@
-import os
-from playwright.sync_api import Page
-from ig_cleaner.utils import random_delay
+# ig_actions.py (sync delete_posts)
+import os, time, random
+from playwright.sync_api import TimeoutError
 
-def delete_posts(page: Page, username: str, count: int = 25):
-    print("🔍 Открываю профиль Instagram…")
-    page.goto(f"https://www.instagram.com/{username}/", timeout=60000)
-    page.wait_for_load_state("networkidle")
-    random_delay(2, 5)
+def random_delay(a=1.5, b=3.0):
+    time.sleep(random.uniform(a, b))
 
-    posts = page.query_selector_all('a[href*="/p/"], a[href*="/reel/"]')
-    print(f"Найдено {len(posts)} постов, удаляем {count}")
-    posts = posts[:count]
-
+def delete_posts(page, username, count=25):
     os.makedirs("logs", exist_ok=True)
-    for i, post in enumerate(posts, start=1):
+    page.goto(f"https://www.instagram.com/{username}/", wait_until="load")
+    random_delay(2,4)
+    if "login" in page.url:
+        print("Похоже, профиль не залогинен в MoreLogin.")
+        return 0
+
+    links = page.query_selector_all('a[href*="/p/"], a[href*="/reel/"]')
+    urls = []
+    for a in links:
+        href = a.get_attribute("href")
+        if href:
+            full = href if href.startswith("http") else f"https://www.instagram.com{href}"
+            if full not in urls:
+                urls.append(full)
+        if len(urls) >= count:
+            break
+    if not urls:
+        print("Посты не найдены.")
+        return 0
+
+    deleted = 0
+    for i, url in enumerate(urls, start=1):
         try:
-            href = post.get_attribute("href")
-            print(f"🗑️ Удаляю {href}")
-            page.goto(f"https://www.instagram.com{href}", timeout=60000)
-            random_delay(2, 5)
-
-            page.get_by_role("button", name="More options").click()
-            random_delay(1, 3)
-            delete_btn = page.get_by_role("button", name="Delete")
-            if not delete_btn.is_visible():
-                delete_btn = page.get_by_text("Удалить")
-            delete_btn.click()
-            random_delay(1, 2)
-            page.get_by_role("button", name="Delete").click()
-            random_delay(3, 6)
+            page.goto(url, wait_until="load")
+            random_delay(1.0, 2.5)
+            # try many selectors
+            options = ['svg[aria-label="More options"]','button[aria-label="More options"]','svg[aria-label="Еще варианты"]','button[aria-label="Еще варианты"]']
+            clicked=False
+            for sel in options:
+                try:
+                    page.wait_for_selector(sel, timeout=2500)
+                    page.click(sel)
+                    clicked=True
+                    break
+                except TimeoutError:
+                    continue
+            if not clicked:
+                print("Кнопка меню не найдена, пропускаю.")
+                continue
+            # find Delete text
+            delete_texts = ["Delete","Удалить","Eliminar","Supprimer"]
+            found=False
+            for txt in delete_texts:
+                try:
+                    page.click(f'text="{txt}"', timeout=2500)
+                    found=True
+                    break
+                except TimeoutError:
+                    continue
+            if not found:
+                print("Кнопка 'Delete' не найдена, пропускаю.")
+                continue
+            # confirm
+            try:
+                page.click('text="Delete"', timeout=3000)
+            except TimeoutError:
+                try:
+                    page.click('text="Удалить"', timeout=3000)
+                except TimeoutError:
+                    pass
+            deleted +=1
+            print(f"{i}/{len(urls)} удалён.")
+            random_delay(1.5, 3.0)
         except Exception as e:
-            path = f"logs/error_{username}_{i}.png"
-            page.screenshot(path=path)
-            print(f"⚠️ Ошибка при удалении поста {i}: {e} (сохранён скриншот {path})")
-
-    print("✅ Удаление завершено")
+            p = f"logs/error_{username}_{i}.png"
+            try: page.screenshot(path=p)
+            except: pass
+            print(f"Ошибка при {url}: {e}. Скрин: {p}")
+            continue
+    return deleted
