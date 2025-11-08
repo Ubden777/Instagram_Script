@@ -69,6 +69,9 @@ class MoreLoginClient:
         if not ws:
             raise RuntimeError(f"Cannot extract WS endpoint from MoreLogin response:\n{data}")
 
+        if "/devtools/browser/" not in ws:
+            raise RuntimeError(f"Полученный WebSocket endpoint не является валидным CDP-адресом (отсутствует '/devtools/browser/'): {ws}")
+
         return ws
 
     def stop_profile(self, profile_id):

@@ -1,124 +1,131 @@
-# ig_cleaner/ig_actions.py
 import time
 import random
 import os
-from playwright.sync_api import TimeoutError
+from playwright.sync_api import Page, TimeoutError
 
-
-def random_sleep(a=1.5, b=3.0):
+def _random_sleep(a=1.5, b=3.0):
+    """Случайная пауза для имитации человеческого поведения."""
     time.sleep(random.uniform(a, b))
 
+def _retry_click(page: Page, selectors: list, max_attempts=3, timeout=2500):
+    """
+    Пытается кликнуть по элементу, перебирая список селекторов.
+    Возвращает (True, attempts) при успехе, (False, attempts) при неудаче.
+    """
+    for attempt in range(1, max_attempts + 1):
+        for selector in selectors:
+            try:
+                page.click(selector, timeout=timeout)
+                return True, attempt
+            except TimeoutError:
+                continue # Попробовать следующий селектор
+            except Exception:
+                continue # Другие ошибки тоже пропускаем
+        _random_sleep(0.5, 1.0) # Пауза перед следующей общей попыткой
+    return False, max_attempts
 
-def collect_posts(page, username, limit=25):
-    page.goto(f"https://www.instagram.com/{username}/", wait_until="load")
-    random_sleep(2, 4)
+def collect_posts(page: Page, logger, username: str, limit=25):
+    """
+    Собирает URL постов, прокручивая страницу.
+    Возвращает список URL.
+    """
+    print("Открытие профиля и сбор постов...")
+    page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+    _random_sleep(3, 5)
 
-    links = page.query_selector_all('a[href*="/p/"], a[href*="/reel/"]')
-    urls = []
+    # Проверка на страницу логина
+    if "login" in page.url.lower():
+        print("ОШИБКА: Профиль не авторизован. Пожалуйста, войдите в Instagram.")
+        logger.log(post_url='n/a', status='error', error_message='Not logged in')
+        return None
 
-    for a in links:
-        href = a.get_attribute("href")
-        if not href:
-            continue
-        full = href if href.startswith("http") else f"https://www.instagram.com{href}"
-        if full not in urls:
-            urls.append(full)
-        if len(urls) >= limit:
+    urls = set()
+    last_height = 0
+    while len(urls) < limit:
+        new_links = page.query_selector_all('a[href*="/p/"], a[href*="/reel/"]')
+        for link in new_links:
+            href = link.get_attribute("href")
+            if href:
+                full_url = href if href.startswith("http") else f"https://www.instagram.com{href}"
+                urls.add(full_url)
+
+        current_height = page.evaluate("document.body.scrollHeight")
+        if current_height == last_height:
+            print(f"Скроллинг завершен. Собрано {len(urls)} уникальных постов.")
             break
 
-    return urls
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+        last_height = current_height
+        _random_sleep(2, 4)
 
+    return list(urls)[:limit]
 
-def delete_posts(page, username, count=25, dry_run=False):
+def delete_posts(page: Page, logger, username: str, count=25, dry_run=False):
     """
-    Deletes 'count' latest posts on page 'username'.
-    If dry_run=True — does NOT delete, only lists posts.
+    Удаляет посты, используя fail-retry логику и детальное логирование.
     """
-    os.makedirs("logs", exist_ok=True)
-
-    urls = collect_posts(page, username, count)
-    if dry_run:
-        print("\n[DRY-RUN] Posts found:")
-        for u in urls:
-            print(u)
-        print("\nDry-run mode — no deletion performed.")
+    urls = collect_posts(page, logger, username, count)
+    if urls is None: # Ошибка авторизации
         return 0
 
     if not urls:
-        print("No posts found.")
+        print("Посты для удаления не найдены.")
+        logger.log(post_url='n/a', status='not_found', error_message='No posts found on the page')
         return 0
 
-    menu_selectors = [
-        'svg[aria-label="More options"]',
-        'button[aria-label="More options"]',
-        'svg[aria-label="Опции"]',
-        'button[aria-label="Опции"]',
-        'svg[aria-label="Еще варианты"]',
-        'button[aria-label="Еще варианты"]',
-        'button:has(svg[aria-label])',
-        'div[role="button"][aria-haspopup="menu"]'
-    ]
+    if dry_run:
+        print(f"\n[DRY-RUN] Найдено {len(urls)} постов. Они будут записаны в CSV, но не удалены.")
+        for url in urls:
+            logger.log(post_url=url, status='skipped', dry_run=True)
+        return 0
 
-    delete_texts = [
-        "Delete", "Удалить", "Eliminar", "Supprimer", "Удалите публикацию", "Löschen", "Deletar"
-    ]
+    print(f"Начинается удаление {len(urls)} постов...")
+    deleted_count = 0
 
-    confirm_texts = [
-        "Delete", "Удалить", "OK", "Да", "Confirm", "Sí", "Eliminar"
-    ]
+    menu_selectors = ['svg[aria-label*="options" i]','button[aria-label*="options" i]','svg[aria-label*="варианты" i]']
+    delete_texts = ["Delete", "Удалить", "Eliminar", "Supprimer"]
+    confirm_texts = ["Delete", "Удалить", "Confirm"]
 
-    deleted = 0
-
-    for i, url in enumerate(urls, start=1):
+    for url in urls:
+        screenshot_path = ''
         try:
-            page.goto(url, wait_until="load")
-            random_sleep(1, 2)
+            page.goto(url, wait_until="domcontentloaded")
+            _random_sleep(2, 3)
 
-            clicked = False
-            for sel in menu_selectors:
-                try:
-                    page.click(sel, timeout=2500)
-                    clicked = True
-                    break
-                except:
-                    pass
+            # 1. Клик по меню "More options"
+            menu_clicked, menu_attempts = _retry_click(page, menu_selectors)
+            if not menu_clicked:
+                raise RuntimeError("Не удалось найти и кликнуть кнопку меню.")
 
-            if not clicked:
-                print(f"No menu for {url}")
-                continue
+            # 2. Клик по кнопке "Delete"
+            delete_selectors = [f'text="{txt}"' for txt in delete_texts]
+            delete_clicked, delete_attempts = _retry_click(page, delete_selectors)
+            if not delete_clicked:
+                raise RuntimeError("Не удалось найти и кликнуть кнопку 'Удалить'.")
 
-            deletion_clicked = False
-            for txt in delete_texts:
-                try:
-                    page.get_by_text(txt, exact=False).click(timeout=2500)
-                    deletion_clicked = True
-                    break
-                except:
-                    pass
+            # 3. Клик по кнопке подтверждения
+            confirm_selectors = [f'button:has-text("{txt}")' for txt in confirm_texts]
+            confirm_clicked, confirm_attempts = _retry_click(page, confirm_selectors, max_attempts=2)
+            if not confirm_clicked:
+                # Иногда подтверждение не требуется, не считаем это фатальной ошибкой
+                print("Кнопка подтверждения не найдена, возможно, она не требуется.")
 
-            if not deletion_clicked:
-                print(f"No 'delete' menu item for {url}")
-                continue
-
-            confirmed = False
-            for txt in confirm_texts:
-                try:
-                    page.get_by_text(txt, exact=False).click(timeout=2000)
-                    confirmed = True
-                    break
-                except:
-                    pass
-
-            deleted += 1
-            print(f"Deleted {i}/{len(urls)}")
-            random_sleep()
+            deleted_count += 1
+            print(f"УСПЕХ: Пост {url} удален.")
+            logger.log(post_url=url, status='deleted', attempts=menu_attempts + delete_attempts + confirm_attempts, delete_action='success')
 
         except Exception as e:
-            screenshot = f"logs/error_{username}_{i}.png"
-            try:
-                page.screenshot(path=screenshot)
-            except:
-                pass
-            print(f"Error on {url}: {e} (screenshot {screenshot})")
+            error_message = str(e).split('\n')[0]
+            print(f"ОШИБКА: Не удалось удалить пост {url}. Причина: {error_message}")
 
-    return deleted
+            try:
+                path = os.path.join("logs", f"error_{username}_{int(time.time())}.png")
+                page.screenshot(path=path)
+                screenshot_path = path
+            except Exception as se:
+                print(f"Не удалось сделать скриншот: {se}")
+
+            logger.log(post_url=url, status='error', error_message=error_message, screenshot_path=screenshot_path)
+            continue
+
+    return deleted_count
